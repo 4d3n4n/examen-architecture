@@ -7,10 +7,10 @@ import com.coworking.reservationservice.domain.ReservationStatus;
 import com.coworking.reservationservice.dto.MemberResponse;
 import com.coworking.reservationservice.dto.ReservationRequest;
 import com.coworking.reservationservice.dto.ReservationResponse;
-import com.coworking.reservationservice.dto.RoomResponse;
 import com.coworking.events.MemberDeletedEvent;
 import com.coworking.events.MemberSuspensionEvent;
 import com.coworking.events.RoomDeletedEvent;
+import com.coworking.reservationservice.pattern.ConfirmedState;
 import com.coworking.reservationservice.pattern.CancelledState;
 import com.coworking.reservationservice.pattern.CompletedState;
 import com.coworking.reservationservice.pattern.ReservationContext;
@@ -19,10 +19,14 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -39,6 +43,12 @@ public class ReservationService {
 
     @Transactional
     public ReservationResponse createReservation(ReservationRequest request) {
+        processExpiredReservations();
+
+        if (!request.getEndDateTime().isAfter(request.getStartDateTime())) {
+            throw new RuntimeException("endDateTime must be after startDateTime.");
+        }
+
         MemberResponse member = memberClient.getMemberById(request.getMemberId());
         if (member.isSuspended()) {
             throw new RuntimeException("Member is suspended and cannot make reservations.");
@@ -53,8 +63,6 @@ public class ReservationService {
             throw new RuntimeException("Room is not available for the requested time slot.");
         }
 
-        roomClient.lockAvailability(request.getRoomId());
-
         Reservation reservation = Reservation.builder()
                 .roomId(request.getRoomId())
                 .memberId(request.getMemberId())
@@ -63,9 +71,11 @@ public class ReservationService {
                 .build();
 
         ReservationContext context = new ReservationContext(reservation);
+        context.setState(new ConfirmedState());
         reservation = reservationRepository.save(context.getReservation());
 
         checkAndPublishQuota(request.getMemberId(), member.getMaxConcurrentBookings());
+        syncRoomAvailability(request.getRoomId());
 
         return mapToResponse(reservation);
     }
@@ -165,6 +175,12 @@ public class ReservationService {
         reservationRepository.deleteAll(memberReservations);
     }
 
+    @Scheduled(fixedDelay = 1000)
+    @Transactional
+    public void completeExpiredReservations() {
+        processExpiredReservations();
+    }
+
     private void checkAndPublishQuota(Long memberId, int maxBookings) {
         long activeCount = reservationRepository.findByMemberIdAndStatus(memberId, ReservationStatus.CONFIRMED).size();
         boolean shouldSuspend = activeCount >= maxBookings;
@@ -175,16 +191,47 @@ public class ReservationService {
     }
 
     private void syncRoomAvailability(Long roomId) {
-        boolean hasConfirmedReservations = !reservationRepository
-                .findByRoomIdAndStatus(roomId, ReservationStatus.CONFIRMED)
-                .isEmpty();
+        LocalDateTime now = LocalDateTime.now();
+        boolean hasOngoingReservation = reservationRepository
+                .existsByRoomIdAndStatusAndStartDateTimeLessThanEqualAndEndDateTimeGreaterThan(
+                        roomId, ReservationStatus.CONFIRMED, now, now);
 
-        if (hasConfirmedReservations) {
+        if (hasOngoingReservation) {
             roomClient.lockAvailability(roomId);
             return;
         }
 
         roomClient.releaseAvailability(roomId);
+    }
+
+    private void processExpiredReservations() {
+        LocalDateTime now = LocalDateTime.now();
+        List<Reservation> expiredReservations = reservationRepository
+                .findByStatusAndEndDateTimeLessThanEqual(ReservationStatus.CONFIRMED, now);
+
+        if (expiredReservations.isEmpty()) {
+            return;
+        }
+
+        Set<Long> impactedRoomIds = new LinkedHashSet<>();
+        Set<Long> impactedMemberIds = new LinkedHashSet<>();
+
+        for (Reservation reservation : expiredReservations) {
+            ReservationContext context = new ReservationContext(reservation);
+            context.setState(new CompletedState());
+            reservationRepository.save(context.getReservation());
+            impactedRoomIds.add(reservation.getRoomId());
+            impactedMemberIds.add(reservation.getMemberId());
+        }
+
+        for (Long roomId : impactedRoomIds) {
+            syncRoomAvailability(roomId);
+        }
+
+        for (Long memberId : impactedMemberIds) {
+            MemberResponse member = memberClient.getMemberById(memberId);
+            checkAndPublishQuota(memberId, member.getMaxConcurrentBookings());
+        }
     }
 
     private ReservationResponse mapToResponse(Reservation reservation) {

@@ -8,8 +8,6 @@ public class ReservationContext {
 
     public ReservationContext(Reservation reservation) {
         this.reservation = reservation;
-        // Default state is confirmed on creation
-        this.setState(new ConfirmedState());
     }
 
     public void setState(ReservationState state) {

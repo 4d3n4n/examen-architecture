@@ -17,4 +17,9 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
     // Check for overlapping reservations for a given room
     boolean existsByRoomIdAndStatusAndStartDateTimeLessThanAndEndDateTimeGreaterThan(
             Long roomId, ReservationStatus status, LocalDateTime endDateTime, LocalDateTime startDateTime);
+
+    boolean existsByRoomIdAndStatusAndStartDateTimeLessThanEqualAndEndDateTimeGreaterThan(
+            Long roomId, ReservationStatus status, LocalDateTime currentDateTime, LocalDateTime sameCurrentDateTime);
+
+    List<Reservation> findByStatusAndEndDateTimeLessThanEqual(ReservationStatus status, LocalDateTime endDateTime);
 }

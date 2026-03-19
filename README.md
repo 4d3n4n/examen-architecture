@@ -5,6 +5,7 @@ Une architecture en microservices (Spring Boot / Spring Cloud / Kafka) pour la g
 ## Architecture
 
 Le projet est structuré autour des microservices suivants :
+* **common-events** : module Maven partagé contenant les événements Kafka communs (`RoomDeletedEvent`, `MemberDeletedEvent`, `MemberSuspensionEvent`).
 * **Config Server** (`:8888`) : Serveur de configuration centralisé (utilise un profil `native` pointant vers le dossier `classpath:/config` pour le TP).
 * **Discovery Server** (`:8761`) : Annuaire Eureka pour la découverte de services.
 * **API Gateway** (`:8080`) : Point d'entrée unique et routage.
@@ -34,27 +35,50 @@ docker-compose up -d
 ```
 *Attendez quelques secondes que Kafka soit pleinement opérationnel.*
 
-### 2. Démarrer les Microservices
+### 2. Compiler le projet
+
+Depuis la racine :
+```bash
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home
+export PATH="$JAVA_HOME/bin:$PATH"
+mvn clean package -DskipTests
+```
+
+Si votre machine utilise déjà Java 17 par défaut, les exports ne sont pas nécessaires. En revanche, avec un JDK plus récent, le build peut devenir instable.
+
+### 3. Démarrer les Microservices
 Vous pouvez lancer chaque service individuellement via votre IDE, ou utiliser Maven dans des terminaux séparés, **strictement dans l'ordre suivant** :
 
 1. **Config Server**
    ```bash
+   export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home
+   export PATH="$JAVA_HOME/bin:$PATH"
    cd config-server && mvn spring-boot:run
    ```
 2. **Discovery Server** (attendre qu'il soit démarré sur `localhost:8761`)
    ```bash
+   export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home
+   export PATH="$JAVA_HOME/bin:$PATH"
    cd discovery-server && mvn spring-boot:run
    ```
 3. **API Gateway**
    ```bash
+   export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home
+   export PATH="$JAVA_HOME/bin:$PATH"
    cd api-gateway && mvn spring-boot:run
    ```
 4. **Room Service**, **Member Service**, **Reservation Service** (l'ordre importe peu ici)
    ```bash
+   export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home
+   export PATH="$JAVA_HOME/bin:$PATH"
    cd room-service && mvn spring-boot:run
    # Dans un autre terminal :
+   export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home
+   export PATH="$JAVA_HOME/bin:$PATH"
    cd member-service && mvn spring-boot:run
    # Dans un autre terminal :
+   export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home
+   export PATH="$JAVA_HOME/bin:$PATH"
    cd reservation-service && mvn spring-boot:run
    ```
 
@@ -95,10 +119,13 @@ curl -X POST http://localhost:8082/api/members \
 *Notez l'ID retourné (ex: 1).*
 
 ### 3. Réserver une salle (Succès)
+
+Important : les services manipulent des `LocalDateTime` sans fuseau horaire. Utilisez donc des dates/heures locales cohérentes avec votre machine, ou lancez directement `./test_complet.sh` qui les génère automatiquement.
+
 ```bash
 curl -X POST http://localhost:8083/api/reservations \
 -H "Content-Type: application/json" \
--d '{"roomId": 1, "memberId": 1, "startDateTime": "2024-05-10T10:00:00", "endDateTime": "2024-05-10T12:00:00"}'
+-d '{"roomId": 1, "memberId": 1, "startDateTime": "2030-05-10T10:00:00", "endDateTime": "2030-05-10T12:00:00"}'
 ```
 *Vérifiez sur le Room Service que la salle n'est plus disponible :*
 ```bash
@@ -109,7 +136,7 @@ curl -X GET http://localhost:8081/api/rooms/1
 ```bash
 curl -X POST http://localhost:8083/api/reservations \
 -H "Content-Type: application/json" \
--d '{"roomId": 1, "memberId": 1, "startDateTime": "2024-05-10T11:00:00", "endDateTime": "2024-05-10T13:00:00"}'
+-d '{"roomId": 1, "memberId": 1, "startDateTime": "2030-05-10T11:00:00", "endDateTime": "2030-05-10T13:00:00"}'
 ```
 *(Doit retourner une erreur 500 : "Room is not available...")*
 
@@ -123,7 +150,7 @@ curl -X POST http://localhost:8081/api/rooms \
 # Réserver salle 2
 curl -X POST http://localhost:8083/api/reservations \
 -H "Content-Type: application/json" \
--d '{"roomId": 2, "memberId": 1, "startDateTime": "2024-05-11T10:00:00", "endDateTime": "2024-05-11T12:00:00"}'
+-d '{"roomId": 2, "memberId": 1, "startDateTime": "2030-05-11T10:00:00", "endDateTime": "2030-05-11T12:00:00"}'
 ```
 *À ce stade, le membre 1 a atteint son quota (2 réservations). Vérifions qu'il est suspendu (via l'event Kafka) :*
 ```bash
@@ -151,3 +178,13 @@ curl -X DELETE http://localhost:8081/api/rooms/2
 curl -X GET http://localhost:8083/api/reservations/2
 # "status" doit être "CANCELLED"
 ```
+
+### Script de vérification
+
+Le script [`test_complet.sh`](/Users/adenankhachnane/Downloads/examen_adenan_khachnane_m1/test_complet.sh) couvre les scénarios du sujet avec des dates locales générées dynamiquement, y compris le passage automatique d'une réservation à `COMPLETED`.
+
+Attention : ce script libère d'abord les ports `8888`, `8761`, `8080`, `8081`, `8082`, `8083`, puis te demande de relancer les services avant de poursuivre.
+
+## Design Pattern
+
+Le choix du pattern utilisé dans `reservation-service` est documenté dans [`DESIGN_PATTERN.md`](/Users/adenankhachnane/Downloads/examen_adenan_khachnane_m1/DESIGN_PATTERN.md).
