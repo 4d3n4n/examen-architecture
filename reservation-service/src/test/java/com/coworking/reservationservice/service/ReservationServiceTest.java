@@ -16,6 +16,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -66,11 +67,11 @@ class ReservationServiceTest {
                 eq(request.getStartDateTime())))
                 .thenReturn(true);
 
-        RuntimeException exception = assertThrows(
-                RuntimeException.class,
+        ResponseStatusException exception = assertThrows(
+                ResponseStatusException.class,
                 () -> reservationService.createReservation(request));
 
-        assertEquals("Room is not available for the requested time slot.", exception.getMessage());
+        assertEquals("Room is not available for the requested time slot.", exception.getReason());
         verify(roomClient).getRoomById(1L);
         verify(reservationRepository, never()).save(any(Reservation.class));
     }

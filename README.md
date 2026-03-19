@@ -138,7 +138,7 @@ curl -X POST http://localhost:8083/api/reservations \
 -H "Content-Type: application/json" \
 -d '{"roomId": 1, "memberId": 1, "startDateTime": "2030-05-10T11:00:00", "endDateTime": "2030-05-10T13:00:00"}'
 ```
-*(Doit retourner une erreur 500 : "Room is not available...")*
+*(Doit retourner une erreur métier `409 Conflict` : "Room is not available...")*
 
 ### 5. Créer une 2ème salle et réserver (Atteinte du quota BASIC)
 ```bash

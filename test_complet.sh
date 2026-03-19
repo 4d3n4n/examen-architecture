@@ -8,6 +8,88 @@ json_id() {
     echo "$1" | grep -o '"id":[0-9]*' | head -n 1 | grep -o '[0-9]*'
 }
 
+LAST_RESPONSE_BODY=""
+LAST_RESPONSE_CODE=""
+
+perform_json_request() {
+    local method=$1
+    local url=$2
+    local data=${3:-}
+    local tmp_file
+
+    tmp_file=$(mktemp)
+
+    if [ -n "$data" ]; then
+        LAST_RESPONSE_CODE=$(curl -sS -o "$tmp_file" -w "%{http_code}" -X "$method" "$url" \
+            -H "Content-Type: application/json" \
+            -d "$data" 2>/dev/null || echo "000")
+    else
+        LAST_RESPONSE_CODE=$(curl -sS -o "$tmp_file" -w "%{http_code}" -X "$method" "$url" \
+            -H "Content-Type: application/json" 2>/dev/null || echo "000")
+    fi
+
+    LAST_RESPONSE_BODY=$(cat "$tmp_file" 2>/dev/null || true)
+    rm -f "$tmp_file"
+}
+
+perform_json_request_with_retry() {
+    local method=$1
+    local url=$2
+    local data=${3:-}
+    local timeout=${4:-20}
+    local elapsed=0
+
+    while [ "$elapsed" -lt "$timeout" ]; do
+        perform_json_request "$method" "$url" "$data"
+
+        if [ "$LAST_RESPONSE_CODE" != "500" ] && [ "$LAST_RESPONSE_CODE" != "503" ] && [ "$LAST_RESPONSE_CODE" != "000" ]; then
+            return 0
+        fi
+
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    return 1
+}
+
+wait_for_service() {
+    local url=$1
+    local timeout=${2:-30}
+    local elapsed=0
+
+    while [ "$elapsed" -lt "$timeout" ]; do
+        if curl -fsS "$url" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    return 1
+}
+
+wait_for_body_contains() {
+    local url=$1
+    local expected=$2
+    local timeout=${3:-30}
+    local elapsed=0
+    local body=""
+
+    while [ "$elapsed" -lt "$timeout" ]; do
+        body=$(curl -sS "$url" 2>/dev/null || true)
+        if [[ "$body" == *"$expected"* ]]; then
+            echo "$body"
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    echo "$body"
+    return 1
+}
+
 echo -e "${YELLOW}=== NETTOYAGE DES PORTS (Arrêt des anciens microservices) ===${NC}"
 PORTS=(8888 8761 8080 8081 8082 8083)
 
@@ -27,38 +109,30 @@ echo -e "${YELLOW}Les ports sont libérés. Veuillez relancer vos microservices 
 echo -e "${YELLOW}Appuyez sur ENTRÉE une fois que TOUS les services ont redémarré avec succès pour lancer les tests...${NC}"
 read
 
-readarray -t TIMES < <(python3 - <<'PY'
+echo "Vérification de la disponibilité des services métier..."
+wait_for_service http://localhost:8081/actuator/health 30 || echo "Room Service ne répond pas encore."
+wait_for_service http://localhost:8082/actuator/health 30 || echo "Member Service ne répond pas encore."
+wait_for_service http://localhost:8083/actuator/health 30 || echo "Reservation Service ne répond pas encore."
+
+eval "$(python3 - <<'PY'
 from datetime import datetime, timedelta
 
 now = datetime.now().replace(microsecond=0)
-values = [
-    now - timedelta(seconds=30),
-    now + timedelta(minutes=10),
-    now + timedelta(minutes=1),
-    now + timedelta(minutes=11),
-    now + timedelta(days=1),
-    now + timedelta(days=1, hours=2),
-    now + timedelta(days=2),
-    now + timedelta(days=2, hours=2),
-    now - timedelta(seconds=1),
-    now + timedelta(seconds=8),
-]
+values = {
+    "CURRENT_START": now - timedelta(seconds=30),
+    "CURRENT_END": now + timedelta(minutes=10),
+    "OVERLAP_START": now + timedelta(minutes=1),
+    "OVERLAP_END": now + timedelta(minutes=11),
+    "FUTURE_START_1": now + timedelta(days=1),
+    "FUTURE_END_1": now + timedelta(days=1, hours=2),
+    "FUTURE_START_2": now + timedelta(days=2),
+    "FUTURE_END_2": now + timedelta(days=2, hours=2),
+}
 
-for value in values:
-    print(value.isoformat())
+for key, value in values.items():
+    print(f'{key}="{value.isoformat()}"')
 PY
-)
-
-CURRENT_START=${TIMES[0]}
-CURRENT_END=${TIMES[1]}
-OVERLAP_START=${TIMES[2]}
-OVERLAP_END=${TIMES[3]}
-FUTURE_START_1=${TIMES[4]}
-FUTURE_END_1=${TIMES[5]}
-FUTURE_START_2=${TIMES[6]}
-FUTURE_END_2=${TIMES[7]}
-SHORT_START=${TIMES[8]}
-SHORT_END=${TIMES[9]}
+)"
 
 UNIQ=$(date +%s)
 
@@ -97,57 +171,55 @@ echo "$MEMBER2_RESPONSE"
 MEMBER2_ID=$(json_id "$MEMBER2_RESPONSE")
 
 echo -e "\n${GREEN}[SCÉNARIO 3] Réserver une salle sur un créneau en cours et vérifier que sa disponibilité change${NC}"
-RES1_RESPONSE=$(curl -sS -X POST http://localhost:8083/api/reservations \
--H "Content-Type: application/json" \
--d "{\"roomId\": $ROOM1_ID, \"memberId\": $MEMBER1_ID, \"startDateTime\": \"$CURRENT_START\", \"endDateTime\": \"$CURRENT_END\"}")
+perform_json_request_with_retry POST http://localhost:8083/api/reservations \
+"{\"roomId\": $ROOM1_ID, \"memberId\": $MEMBER1_ID, \"startDateTime\": \"$CURRENT_START\", \"endDateTime\": \"$CURRENT_END\"}" 30
+RES1_RESPONSE=$LAST_RESPONSE_BODY
 echo "$RES1_RESPONSE"
 RES1_ID=$(json_id "$RES1_RESPONSE")
 
 echo "Vérification disponibilité Salle $ROOM1_ID (doit être available: false car créneau en cours)..."
-curl -sS http://localhost:8081/api/rooms/"$ROOM1_ID"
+wait_for_body_contains http://localhost:8081/api/rooms/"$ROOM1_ID" '"available":false' 10
 
 echo -e "\n${GREEN}[SCÉNARIO 4] Tenter une réservation sur une salle déjà occupée sur le même créneau (doit échouer)${NC}"
-curl -sS -w "\nHTTP Code (doit être 500): %{http_code}\n" -X POST http://localhost:8083/api/reservations \
--H "Content-Type: application/json" \
--d "{\"roomId\": $ROOM1_ID, \"memberId\": $MEMBER2_ID, \"startDateTime\": \"$OVERLAP_START\", \"endDateTime\": \"$OVERLAP_END\"}"
+perform_json_request_with_retry POST http://localhost:8083/api/reservations \
+"{\"roomId\": $ROOM1_ID, \"memberId\": $MEMBER2_ID, \"startDateTime\": \"$OVERLAP_START\", \"endDateTime\": \"$OVERLAP_END\"}" 15
+echo "$LAST_RESPONSE_BODY"
+echo "HTTP Code (doit être 409): $LAST_RESPONSE_CODE"
 
 echo -e "\n${GREEN}[SCÉNARIO 5] Atteindre le quota d'un membre BASIC (2 réservations actives) et vérifier la suspension${NC}"
-RES2_RESPONSE=$(curl -sS -X POST http://localhost:8083/api/reservations \
--H "Content-Type: application/json" \
--d "{\"roomId\": $ROOM2_ID, \"memberId\": $MEMBER1_ID, \"startDateTime\": \"$FUTURE_START_1\", \"endDateTime\": \"$FUTURE_END_1\"}")
+perform_json_request_with_retry POST http://localhost:8083/api/reservations \
+"{\"roomId\": $ROOM2_ID, \"memberId\": $MEMBER1_ID, \"startDateTime\": \"$FUTURE_START_1\", \"endDateTime\": \"$FUTURE_END_1\"}" 15
+RES2_RESPONSE=$LAST_RESPONSE_BODY
 echo "$RES2_RESPONSE"
 RES2_ID=$(json_id "$RES2_RESPONSE")
 
-echo "Attente de 3 secondes (Propagation Kafka pour la suspension)..."
-sleep 3
-curl -sS http://localhost:8082/api/members/"$MEMBER1_ID"
+echo "Attente de la suspension du membre BASIC..."
+wait_for_body_contains http://localhost:8082/api/members/"$MEMBER1_ID" '"suspended":true' 30
 
 echo -e "\nTentative d'une 3ème réservation par le membre BASIC (doit échouer car suspendu)..."
-curl -sS -w "\nHTTP Code (doit être 500): %{http_code}\n" -X POST http://localhost:8083/api/reservations \
--H "Content-Type: application/json" \
--d "{\"roomId\": $ROOM3_ID, \"memberId\": $MEMBER1_ID, \"startDateTime\": \"$FUTURE_START_2\", \"endDateTime\": \"$FUTURE_END_2\"}"
+perform_json_request_with_retry POST http://localhost:8083/api/reservations \
+"{\"roomId\": $ROOM3_ID, \"memberId\": $MEMBER1_ID, \"startDateTime\": \"$FUTURE_START_2\", \"endDateTime\": \"$FUTURE_END_2\"}" 15
+echo "$LAST_RESPONSE_BODY"
+echo "HTTP Code (doit être 409): $LAST_RESPONSE_CODE"
 
 echo -e "\n${GREEN}[SCÉNARIO 6] Annuler une réservation et vérifier que le membre est désuspendu${NC}"
 curl -sS -X PUT http://localhost:8083/api/reservations/"$RES1_ID"/cancel
-sleep 3
-curl -sS http://localhost:8082/api/members/"$MEMBER1_ID"
+wait_for_body_contains http://localhost:8082/api/members/"$MEMBER1_ID" '"suspended":false' 30
 echo
-curl -sS http://localhost:8081/api/rooms/"$ROOM1_ID"
+wait_for_body_contains http://localhost:8081/api/rooms/"$ROOM1_ID" '"available":true' 10
 
 echo -e "\n${GREEN}[SCÉNARIO 7] Supprimer une salle et vérifier la propagation Kafka sur les réservations${NC}"
 curl -sS -X DELETE http://localhost:8081/api/rooms/"$ROOM2_ID"
-sleep 3
-curl -sS http://localhost:8083/api/reservations/"$RES2_ID"
+wait_for_body_contains http://localhost:8083/api/reservations/"$RES2_ID" '"status":"CANCELLED"' 30
 
 echo -e "\n${GREEN}[SCÉNARIO 8] Supprimer un membre et vérifier la propagation Kafka${NC}"
-RES3_RESPONSE=$(curl -sS -X POST http://localhost:8083/api/reservations \
--H "Content-Type: application/json" \
--d "{\"roomId\": $ROOM3_ID, \"memberId\": $MEMBER2_ID, \"startDateTime\": \"$CURRENT_START\", \"endDateTime\": \"$CURRENT_END\"}")
+perform_json_request_with_retry POST http://localhost:8083/api/reservations \
+"{\"roomId\": $ROOM3_ID, \"memberId\": $MEMBER2_ID, \"startDateTime\": \"$CURRENT_START\", \"endDateTime\": \"$CURRENT_END\"}" 15
+RES3_RESPONSE=$LAST_RESPONSE_BODY
 echo "$RES3_RESPONSE"
 
 curl -sS -X DELETE http://localhost:8082/api/members/"$MEMBER2_ID"
-sleep 3
-curl -sS http://localhost:8081/api/rooms/"$ROOM3_ID"
+wait_for_body_contains http://localhost:8081/api/rooms/"$ROOM3_ID" '"available":true' 30
 
 echo -e "\n${GREEN}[SCÉNARIO 9] Laisser une réservation arriver à échéance et vérifier le passage à COMPLETED${NC}"
 ROOM4_RESPONSE=$(curl -sS -X POST http://localhost:8081/api/rooms \
@@ -162,22 +234,31 @@ MEMBER3_RESPONSE=$(curl -sS -X POST http://localhost:8082/api/members \
 MEMBER3_ID=$(json_id "$MEMBER3_RESPONSE")
 echo "$MEMBER3_RESPONSE"
 
-SHORT_RES_RESPONSE=$(curl -sS -X POST http://localhost:8083/api/reservations \
--H "Content-Type: application/json" \
--d "{\"roomId\": $ROOM4_ID, \"memberId\": $MEMBER3_ID, \"startDateTime\": \"$SHORT_START\", \"endDateTime\": \"$SHORT_END\"}")
+eval "$(python3 - <<'PY'
+from datetime import datetime, timedelta
+
+now = datetime.now().replace(microsecond=0)
+print(f'SHORT_START="{(now - timedelta(seconds=1)).isoformat()}"')
+print(f'SHORT_END="{(now + timedelta(seconds=8)).isoformat()}"')
+PY
+)"
+
+perform_json_request_with_retry POST http://localhost:8083/api/reservations \
+"{\"roomId\": $ROOM4_ID, \"memberId\": $MEMBER3_ID, \"startDateTime\": \"$SHORT_START\", \"endDateTime\": \"$SHORT_END\"}" 15
+SHORT_RES_RESPONSE=$LAST_RESPONSE_BODY
 SHORT_RES_ID=$(json_id "$SHORT_RES_RESPONSE")
 echo "$SHORT_RES_RESPONSE"
 
 echo "Disponibilité immédiate de la salle (doit être false tant que le créneau est en cours)..."
-curl -sS http://localhost:8081/api/rooms/"$ROOM4_ID"
+wait_for_body_contains http://localhost:8081/api/rooms/"$ROOM4_ID" '"available":false' 10
 
 echo "Attente de 10 secondes pour laisser l'échéance être détectée..."
 sleep 10
 
 echo "Réservation courte (doit être COMPLETED)..."
-curl -sS http://localhost:8083/api/reservations/"$SHORT_RES_ID"
+wait_for_body_contains http://localhost:8083/api/reservations/"$SHORT_RES_ID" '"status":"COMPLETED"' 10
 echo
 echo "Salle courte (doit être redevenue available: true)..."
-curl -sS http://localhost:8081/api/rooms/"$ROOM4_ID"
+wait_for_body_contains http://localhost:8081/api/rooms/"$ROOM4_ID" '"available":true' 10
 
 echo -e "\n${GREEN}=== FIN DES TESTS ===${NC}"

@@ -22,6 +22,8 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashSet;
@@ -45,13 +47,28 @@ public class ReservationService {
     public ReservationResponse createReservation(ReservationRequest request) {
         processExpiredReservations();
 
+        if (request.getRoomId() == null || request.getMemberId() == null
+                || request.getStartDateTime() == null || request.getEndDateTime() == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "roomId, memberId, startDateTime and endDateTime are required.");
+        }
+
         if (!request.getEndDateTime().isAfter(request.getStartDateTime())) {
-            throw new RuntimeException("endDateTime must be after startDateTime.");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "endDateTime must be after startDateTime.");
         }
 
         MemberResponse member = memberClient.getMemberById(request.getMemberId());
         if (member.isSuspended()) {
-            throw new RuntimeException("Member is suspended and cannot make reservations.");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Member is suspended and cannot make reservations.");
+        }
+
+        long activeBookings = reservationRepository.findByMemberIdAndStatus(
+                request.getMemberId(), ReservationStatus.CONFIRMED).size();
+        if (activeBookings >= member.getMaxConcurrentBookings()) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Member has reached the maximum number of active reservations.");
         }
 
         roomClient.getRoomById(request.getRoomId());
@@ -60,7 +77,7 @@ public class ReservationService {
                 request.getRoomId(), ReservationStatus.CONFIRMED, request.getEndDateTime(), request.getStartDateTime());
 
         if (hasOverlap) {
-            throw new RuntimeException("Room is not available for the requested time slot.");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Room is not available for the requested time slot.");
         }
 
         Reservation reservation = Reservation.builder()
