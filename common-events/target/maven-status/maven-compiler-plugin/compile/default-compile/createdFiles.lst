@@ -1,0 +1,3 @@
+com/coworking/events/RoomDeletedEvent.class
+com/coworking/events/MemberDeletedEvent.class
+com/coworking/events/MemberSuspensionEvent.class

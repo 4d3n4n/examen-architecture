@@ -3,7 +3,7 @@ package com.coworking.roomservice.service;
 import com.coworking.roomservice.domain.Room;
 import com.coworking.roomservice.dto.RoomRequest;
 import com.coworking.roomservice.dto.RoomResponse;
-import com.coworking.roomservice.event.RoomDeletedEvent;
+import com.coworking.events.RoomDeletedEvent;
 import com.coworking.roomservice.repository.RoomRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -81,12 +81,9 @@ public class RoomService {
     public boolean checkAndLockAvailability(Long id) {
         Room room = roomRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Room not found: " + id));
-        if (room.isAvailable()) {
-            room.setAvailable(false);
-            roomRepository.save(room);
-            return true;
-        }
-        return false;
+        room.setAvailable(false);
+        roomRepository.save(room);
+        return true;
     }
 
     @Transactional

@@ -1,0 +1,9 @@
+/Users/adenankhachnane/Downloads/examen_adenan_khachnane_m1/room-service/src/main/java/com/coworking/roomservice/repository/RoomRepository.java
+/Users/adenankhachnane/Downloads/examen_adenan_khachnane_m1/room-service/src/main/java/com/coworking/roomservice/service/RoomService.java
+/Users/adenankhachnane/Downloads/examen_adenan_khachnane_m1/room-service/src/main/java/com/coworking/roomservice/domain/RoomType.java
+/Users/adenankhachnane/Downloads/examen_adenan_khachnane_m1/room-service/src/main/java/com/coworking/roomservice/RoomServiceApplication.java
+/Users/adenankhachnane/Downloads/examen_adenan_khachnane_m1/room-service/src/main/java/com/coworking/roomservice/event/RoomDeletedEvent.java
+/Users/adenankhachnane/Downloads/examen_adenan_khachnane_m1/room-service/src/main/java/com/coworking/roomservice/dto/RoomResponse.java
+/Users/adenankhachnane/Downloads/examen_adenan_khachnane_m1/room-service/src/main/java/com/coworking/roomservice/controller/RoomController.java
+/Users/adenankhachnane/Downloads/examen_adenan_khachnane_m1/room-service/src/main/java/com/coworking/roomservice/domain/Room.java
+/Users/adenankhachnane/Downloads/examen_adenan_khachnane_m1/room-service/src/main/java/com/coworking/roomservice/dto/RoomRequest.java

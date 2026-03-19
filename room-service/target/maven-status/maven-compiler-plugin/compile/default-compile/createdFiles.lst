@@ -1,0 +1,11 @@
+com/coworking/roomservice/RoomServiceApplication.class
+com/coworking/roomservice/dto/RoomRequest.class
+com/coworking/roomservice/domain/Room$RoomBuilder.class
+com/coworking/roomservice/domain/Room.class
+com/coworking/roomservice/event/RoomDeletedEvent.class
+com/coworking/roomservice/dto/RoomResponse.class
+com/coworking/roomservice/domain/RoomType.class
+com/coworking/roomservice/dto/RoomResponse$RoomResponseBuilder.class
+com/coworking/roomservice/controller/RoomController.class
+com/coworking/roomservice/service/RoomService.class
+com/coworking/roomservice/repository/RoomRepository.class

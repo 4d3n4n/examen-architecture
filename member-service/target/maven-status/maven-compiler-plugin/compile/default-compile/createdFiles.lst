@@ -1,0 +1,12 @@
+com/coworking/memberservice/MemberServiceApplication.class
+com/coworking/memberservice/domain/Member.class
+com/coworking/memberservice/service/MemberService.class
+com/coworking/memberservice/repository/MemberRepository.class
+com/coworking/memberservice/controller/MemberController.class
+com/coworking/memberservice/domain/Member$MemberBuilder.class
+com/coworking/memberservice/domain/SubscriptionType.class
+com/coworking/memberservice/event/MemberSuspensionEvent.class
+com/coworking/memberservice/dto/MemberRequest.class
+com/coworking/memberservice/dto/MemberResponse.class
+com/coworking/memberservice/dto/MemberResponse$MemberResponseBuilder.class
+com/coworking/memberservice/event/MemberDeletedEvent.class
